@@ -8,9 +8,9 @@ class GiosApi {
         'PM10'  => 'pm10',
     );
 
-    const STATION_URL = 'https://api.gios.gov.pl/pjp-api/rest/station/sensors/';
+    const STATION_URL = 'https://api.gios.gov.pl/pjp-api/v1/rest/station/sensors/';
 
-    const DATA_URL = 'http://api.gios.gov.pl/pjp-api/rest/data/getData/';
+    const DATA_URL = 'https://api.gios.gov.pl/pjp-api/v1/rest/data/getData/';
 
     private $data = null;
 
@@ -24,30 +24,32 @@ class GiosApi {
         $parser = new \JsonCollectionParser\Parser();
         $endpointIds = array();
 
-        $remoteStream = fopen(GiosApi::STATION_URL . $sensorId, 'r', false, $ctx);
+        $remoteStream = fopen(GiosApi::STATION_URL . $sensorId . '?size=500', 'r', false, $ctx);
         $parser->parse($remoteStream, function (array $endpoint) use (&$endpointIds) {
-            $paramCode = $endpoint['param']['paramCode'];
-            if (isset(GiosApi::VALUE_MAPPING[$paramCode])) {
-                $endpointIds[GiosApi::VALUE_MAPPING[$paramCode]] = $endpoint['id'];
+            foreach($endpoint["Lista stanowisk pomiarowych dla podanej stacji"] as $v) {
+                $code = $v['Wskaźnik - kod'];
+                if(isset(GiosApi::VALUE_MAPPING[$code])) {
+                    $mappedCode = GiosApi::VALUE_MAPPING[$code];
+                    if (isset($endpointIds[$mappedCode])) {
+                        continue;
+                    }
+                    $endpointIds[GiosApi::VALUE_MAPPING[$code]] = $v['Identyfikator stanowiska'];
+                }
             }
         });
+
         $record = array();
         foreach ($endpointIds as $key => $endpointId) {
             $remoteStream = fopen(GiosApi::DATA_URL . $endpointId, 'r', false, $ctx);
             $parser->parse($remoteStream, function ($data) use (&$record, $key) {
-                foreach ($data['values'] as $v) {
-                    if ($v['value'] !== null) {
-                        $record['timestamp'] = \DateTime::createFromFormat('Y-m-d H:i:s', $v['date'], new \DateTimeZone('Europe/Warsaw'))->getTimestamp();
-                        $record[$key] = $v['value'];
+                foreach ($data['Lista danych pomiarowych'] as $v) {
+                    if ($v['Wartość'] !== null) {
+                        $record['timestamp'] = \DateTime::createFromFormat('Y-m-d H:i:s', $v['Data'], new \DateTimeZone('Europe/Warsaw'))->getTimestamp();
+                        $record[$key] = $v['Wartość'];
                         break;
                     }
                 }
             });
-        }
-        if (isset($record['timestamp'])) {
-            if (time() - $record['timestamp'] < 2 * 60 * 60) {
-                $record['timestamp'] = time();
-            }
         }
         return $record;
     }
